@@ -1,0 +1,13 @@
+=== start  00:03:10
+200/400
+400/400
+Qwen3-1.7B: (2840, 29, 2048), 1000 pairs
+=== start --adapter adapters/Qwen3-1.7B_n8000_nocall0.1_r16_s0 00:04:23
+200/400
+400/400
+Qwen3-1.7B_n8000_nocall0.1_r16_s0: (2840, 29, 2048), 1000 pairs
+=== start --adapter adapters/Qwen3-1.7B_n8000_nocall0.1_r16_s1 00:06:01
+200/400
+400/400
+Qwen3-1.7B_n8000_nocall0.1_r16_s1: (2840, 29, 2048), 1000 pairs
+=== done 00:07:40
