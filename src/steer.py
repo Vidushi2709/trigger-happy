@@ -36,6 +36,7 @@ def main():
     ap.add_argument("--per-cat", type=int, default=50)
     ap.add_argument("--n-irr", type=int, help="limit irrelevance prompts (smoke test)")
     ap.add_argument("--heldout", action="store_true", help="score on prompts not used to pick the strength")
+    ap.add_argument("--live", action="store_true", help="real-user prompts where a tool fits (live_simple + live_multiple)")
     ap.add_argument("--batch", type=int, default=8)
     args = ap.parse_args()
 
@@ -43,7 +44,7 @@ def main():
     D = np.load(ROOT / f"results/acts/{tag}/directions.npz")
     layer = args.layer or int(D["layer"])
     vec = torch.tensor(D[args.dir][layer], dtype=torch.bfloat16, device="cuda")
-    out = ROOT / "results" / f"steer_{tag}_{args.dir}_L{layer}{'_first' if args.first else ''}{'_heldout' if args.heldout else ''}{'-smoke' if args.n_irr else ''}.jsonl"
+    out = ROOT / "results" / f"steer_{tag}_{args.dir}_L{layer}{'_first' if args.first else ''}{'_heldout' if args.heldout else ''}{'_live' if args.live else ''}{'-smoke' if args.n_irr else ''}.jsonl"
     done = {(r["alpha"], r["id"]): r for r in map(json.loads, open(out, encoding="utf-8"))} if out.exists() else {}
 
     tok = AutoTokenizer.from_pretrained(args.model, padding_side="left")
@@ -51,7 +52,13 @@ def main():
                                              add_generation_prompt=True, tokenize=False, enable_thinking=False)
     rng = random.Random(0)
     picked = {c: rng.sample(load(c), args.per_cat) for c in CATEGORIES[:-1]}  # the same draws every run
-    if args.heldout:
+    if args.live:
+        # same source as the live_irrelevance prompts, but a tool fits: does the push refuse real-user prompts in general?
+        prompts = []
+        for c in ("live_simple", "live_multiple"):
+            rows = [(r, t) for r, t in load(c) if len(tok(chat(r))["input_ids"]) <= 1024]
+            prompts += [(c, r, t) for r, t in random.Random(1).sample(rows, min(300, len(rows)))][: args.n_irr]
+    elif args.heldout:
         prompts = []
         for c in CATEGORIES[:-1]:
             seen = {r["id"] for r, _ in picked[c]}
@@ -102,7 +109,7 @@ def main():
     print(f"\n{out.name}")
     for a in sorted({k[0] for k in done}):
         line = []
-        for c in CATEGORIES + ["live_irrelevance"]:
+        for c in CATEGORIES + ["live_irrelevance", "live_simple", "live_multiple"]:
             ks = [r["correct"] for (x, _), r in done.items() if x == a and r["category"] == c]
             if not ks:
                 continue
