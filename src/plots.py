@@ -1,4 +1,4 @@
-"""Figures for the write-up: baselines, training loss, fine-tune evaluation, probe AUROC by layer.
+"""Figures for the write-up: baselines, training loss, fine-tune evaluation, probe AUROC by layer, steering.
 
 python src/plots.py      # writes results/figures/*.png from files already in results/
 """
@@ -16,10 +16,13 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 OUT = ROOT / "results/figures"
 CATS = ["simple", "multiple", "parallel", "parallel_multiple", "irrelevance"]
 FT = "Qwen3-1.7B_n8000_nocall0.1_r16_s{}"
+FT25 = "Qwen3-1.7B_n8000_nocall0.25_r16_s{}"
 # one colour per model everywhere (validated: CVD-safe as a set, aqua needs the legend, which every chart has)
-COLOR = {"Qwen3-0.6B": "#008300", "Qwen3-1.7B": "#2a78d6", FT.format(0): "#eb6834", FT.format(1): "#1baf7a"}
+COLOR = {"Qwen3-0.6B": "#008300", "Qwen3-1.7B": "#2a78d6", FT.format(0): "#eb6834", FT.format(1): "#1baf7a",
+         FT25.format(0): "#eda100", FT25.format(1): "#6250d6"}
 LABEL = {"Qwen3-0.6B": "Qwen3-0.6B, untouched", "Qwen3-1.7B": "Qwen3-1.7B, untouched",
-         FT.format(0): "1.7B fine-tuned, seed 0", FT.format(1): "1.7B fine-tuned, seed 1"}
+         FT.format(0): "10% no-call, seed 0", FT.format(1): "10% no-call, seed 1",
+         FT25.format(0): "25% no-call, seed 0", FT25.format(1): "25% no-call, seed 1"}
 INK, MUTED, GRID = "#0b0b0b", "#52514e", "#e4e3df"
 plt.rcParams.update({"font.size": 9, "axes.edgecolor": MUTED, "axes.labelcolor": INK, "xtick.color": MUTED, "ytick.color": MUTED,
                      "axes.spines.top": False, "axes.spines.right": False, "axes.grid": True, "grid.color": GRID,
@@ -48,16 +51,16 @@ def bars(models, title, path):
         ax.bar(x, v[:, 0], w - 0.02, color=COLOR[m], label=LABEL[m])
         ax.errorbar(x, v[:, 0], yerr=[v[:, 0] - v[:, 1], v[:, 2] - v[:, 0]], fmt="none", ecolor=INK, elinewidth=0.8, capsize=2)
     ax.set_xticks(range(len(cats)), [c.replace("_", "-") for c in cats[:-1]] + ["overall"])
-    ax.set_ylim(50, 100); ax.set_ylabel("BFCL accuracy, % (95% CI)"); ax.set_title(title, loc="left", color=INK, pad=24)
-    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=len(models))
+    ax.set_ylim(50, 100); ax.set_ylabel("BFCL accuracy, % (95% CI)"); ax.set_title(title, loc="left", color=INK, pad=12 + 14 * -(-len(models) // 3))
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=3, fontsize=8)
     fig.tight_layout(); fig.savefig(OUT / path, dpi=150); plt.close(fig)
 
 
 def training():
     fig, ax = plt.subplots(figsize=(7, 3.4))
-    for s in (0, 1):
-        log = [x for x in json.load(open(ROOT / f"results/{FT.format(s)}_train.json"))["log"] if "loss" in x]
-        ax.plot([x["step"] for x in log], [x["loss"] for x in log], lw=2, color=COLOR[FT.format(s)], label=f"seed {s}")
+    for m in [FT.format(0), FT.format(1), FT25.format(0), FT25.format(1)]:
+        log = [x for x in json.load(open(ROOT / f"results/{m}_train.json"))["log"] if "loss" in x]
+        ax.plot([x["step"] for x in log], [x["loss"] for x in log], lw=2, color=COLOR[m], label=LABEL[m])
     ax.set_yscale("log"); ax.set_xlabel("training step (16 examples each)"); ax.set_ylabel("training loss (log scale)")
     ax.set_title("Fine-tuning Qwen3-1.7B: loss per 10 steps", loc="left", color=INK); ax.legend()
     fig.tight_layout(); fig.savefig(OUT / "2_training_loss.png", dpi=150); plt.close(fig)
@@ -98,9 +101,9 @@ def probes():
 OUT.mkdir(parents=True, exist_ok=True)
 bars(["Qwen3-0.6B", "Qwen3-1.7B"], "Baselines: untouched Qwen3 models on BFCL single-turn", "1_baselines.png")
 training()
-bars(["Qwen3-1.7B", FT.format(0), FT.format(1)], "Fine-tuning Qwen3-1.7B (10% no-call data): better parallel calls, worse holding back", "3_finetune_eval.png")
+bars(["Qwen3-1.7B", FT.format(0), FT.format(1), FT25.format(0), FT25.format(1)],
+     "Fine-tuning Qwen3-1.7B: better parallel calls, worse holding back, with 10% or 25% no-call data", "3_finetune_eval.png")
 probes()
-print(sorted(p.name for p in OUT.glob("*.png")))
 
 
 def steering():
@@ -136,4 +139,30 @@ def steering():
     fig.tight_layout(); fig.savefig(OUT / "5_steering.png", dpi=150); plt.close(fig)
 
 
+
+def nocall():
+    """How often the steered model answers without a tool call, push 0 vs 2, on three groups of held-out prompts."""
+    rows = [json.loads(l) for f in ("first_heldout", "first_live")
+            for l in open(ROOT / f"results/steer_{FT.format(0)}_calls_L17_{f}.jsonl", encoding="utf-8")]
+    groups = [("Real users, no tool fits\n(live_irrelevance, 300)", {"live_irrelevance"}),
+              ("Real users, a tool fits\n(live_simple + live_multiple, 558)", {"live_simple", "live_multiple"}),
+              ("Synthetic, a tool fits\n(BFCL held-out, 800)", set(CATS[:-1]))]
+    fig, ax = plt.subplots(figsize=(8, 3.8))
+    for j, (a, color, label) in enumerate([(0.0, "#a8a7a2", "no push"), (2.0, COLOR[FT.format(0)], "push 2 at the decision moment")]):
+        for g, (_, cats) in enumerate(groups):
+            x = [r["category"] in cats and "<tool_call>" not in r["output"] for r in rows if r["alpha"] == a and r["category"] in cats]
+            k, n = sum(x), len(x)
+            lo, hi = wilson(k, n)
+            ax.bar(g + (j - 0.5) * 0.36, k / n * 100, 0.34, color=color, label=label if g == 0 else None)
+            ax.errorbar(g + (j - 0.5) * 0.36, k / n * 100, yerr=[[k / n * 100 - lo * 100], [hi * 100 - k / n * 100]], fmt="none", ecolor=INK, elinewidth=0.8, capsize=2)
+            ax.annotate(f"{k / n:.0%}", (g + (j - 0.5) * 0.36, hi * 100), textcoords="offset points", xytext=(0, 3), ha="center", color=INK, fontsize=8)
+    ax.set_xticks(range(len(groups)), [g for g, _ in groups], fontsize=8); ax.set_ylim(0, 100)
+    ax.set_ylabel("answers with no tool call, % (95% CI)")
+    ax.set_title("Steering adds about 19 points of 'no call' on real-user prompts, whether or not a tool fits", loc="left", color=INK, fontsize=9, pad=22)
+    ax.legend(loc="lower left", bbox_to_anchor=(0, 1.0), ncol=2, fontsize=8)
+    fig.tight_layout(); fig.savefig(OUT / "6_steering_nocall.png", dpi=150); plt.close(fig)
+
+
 steering()
+nocall()
+print(sorted(p.name for p in OUT.glob("*.png")))
